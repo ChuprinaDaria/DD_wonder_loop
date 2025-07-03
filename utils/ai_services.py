@@ -88,6 +88,59 @@ class OpenAIService:
         except:
             return f"{opened_at}, до {expire_at}"
 
+    def _determine_sale_or_exchange(self, data: dict) -> tuple[bool, bool]:
+        """Визначає чи це продаж чи обмін на основі наявних даних"""
+        # Перевіряємо чи є дані про ціни
+        has_price_data = (
+            data.get('price_buy') is not None and 
+            data.get('price_sell') is not None and
+            str(data.get('price_buy', '')).strip() != '' and
+            str(data.get('price_sell', '')).strip() != ''
+        )
+        
+        # Перевіряємо чи є дані про обмін
+        exchange_details = data.get('exchange_details', '').strip()
+        has_exchange_data = (
+            exchange_details and 
+            exchange_details.lower() not in ['пропустити', 'немає', '']
+        )
+        
+        return has_price_data, has_exchange_data
+
+    def _generate_price_line(self, data: dict) -> str:
+        """Генерує рядок з ціною"""
+        price_buy = data.get('price_buy', '')
+        price_sell = data.get('price_sell', '')
+        
+        # Варіанти дотепних коментарів для ціни
+        price_comments = [
+            "відпущу в люди за символічну плату",
+            "нехай живе у когось іншого",
+            "віддаю майже задарма",
+            "хоч щось повернути",
+            "краще в добрі руки ніж в шухляду",
+            "продаю зі знижкою на розчарування"
+        ]
+        
+        comment = random.choice(price_comments)
+        return f"• Ціна: Купувала за {price_buy} грн, віддаю за {price_sell} грн ({comment})"
+
+    def _generate_exchange_line(self, data: dict) -> str:
+        """Генерує рядок з обміном"""
+        exchange_details = data.get('exchange_details', '').strip()
+        
+        # Варіанти дотепних коментарів для обміну
+        exchange_comments = [
+            "може хтось має саме те що треба",
+            "бартер як у давні часи",
+            "обмін без доплат і нервів",
+            "можливо комусь підійде краще",
+            "шукаю взаємовигідний варіант"
+        ]
+        
+        comment = random.choice(exchange_comments)
+        return f"• Обмін: {exchange_details} ({comment})"
+
     async def generate_post_text(self, data: dict) -> str:
         """Генерує весь пост через GPT з збереженням структури"""
         
@@ -99,10 +152,17 @@ class OpenAIService:
         )
         hashtags = self._select_hashtags(data)
         
-        # Перевіряємо чи є ціна або обмін
-        is_sale = bool(data.get('price_buy')) and bool(data.get('price_sell'))
-        exchange_option = data.get('exchange_option', '').strip()
-        is_exchange = bool(exchange_option and exchange_option.lower() != 'пропустити')
+        # Визначаємо тип операції (продаж чи обмін)
+        is_sale, is_exchange = self._determine_sale_or_exchange(data)
+        
+        # Генеруємо рядок для ціни/обміну
+        if is_sale:
+            price_exchange_line = self._generate_price_line(data)
+        elif is_exchange:
+            price_exchange_line = self._generate_exchange_line(data)
+        else:
+            # Fallback якщо немає ні ціни ні обміну
+            price_exchange_line = "• Ціна: договірна (пишіть, домовимося)"
 
         system_prompt = """Ти адаптуєш дані про косметичний засіб у іронічно-розчарований стиль для продажу б/у косметики.
 
@@ -114,7 +174,7 @@ class OpenAIService:
 • Чому продаю: {іронічна причина}
 • Про засіб: {стилізований опис користувача}
 • Шкіра: {стиль типу шкіри}
-• Ціна: {реальні цифри + жарт} АБО • Обмін: {стилізована причина обміну + жарт}
+{рядок з ціною або обміном - ВСТАВИТИ БЕЗ ЗМІН}
 • Локація: {місто}, доставка: {доставка з гумором}
 {3 хештеги в одному рядку через пробіли}
 
@@ -164,10 +224,7 @@ class OpenAIService:
 - Якщо користувач написав "Сироватка з вітаміном С" → "сироватка з вітаміном С і великими планами"
 - ЗАВЖДИ зберігай факти користувача, тільки додавай гумор
 
-ЦІНА/ОБМІН - ВАЖЛИВО:
-- Якщо ПРОДАЖ: "• Ціна: Купувала за X грн, віддаю за Y грн (відпущу в люди за символічну плату)"
-- Якщо ОБМІН: "• Обмін: [стилізована причина обміну користувача з жартом]"
-- НЕ пиши "ціна з жартом" - пиши РЕАЛЬНІ ЦИФРИ!
+ВАЖЛИВО: Рядок з ціною/обміном ВСТАВЛЯЙ БЕЗ ЖОДНИХ ЗМІН!
 
 ОБМЕЖЕННЯ: Весь текст разом з хештегами ≤950 символів!
 
@@ -182,12 +239,13 @@ class OpenAIService:
 Залишок: {data.get('left_percent', 0)}%
 Дати: {formatted_dates}
 Причина продажу: {data.get('reason', '')}
-Опис користувача: {data.get('user_description', '')}
+Опис користувача: {data.get('description', '')}
 Тип шкіри: {data.get('skin_type', '')}
 Місто: {data.get('city', '')}
 Доставка: {data.get('delivery', '')}
-{"Ціна покупки: " + str(data.get('price_buy', '')) + " грн, продажу: " + str(data.get('price_sell', '')) + " грн" if is_sale else ""}
-{"Обмін на: " + exchange_option if is_exchange else ""}
+
+РЯДОК ЦІНИ/ОБМІНУ (вставити БЕЗ ЗМІН):
+{price_exchange_line}
 
 Поверни ТІЛЬКИ адаптований текст у вказаній структурі, БЕЗ пояснень."""
 
@@ -257,23 +315,25 @@ class OpenAIService:
         else:
             condition = "залишилось на спомин"
         
-        is_sale = bool(data.get('price_buy')) and bool(data.get('price_sell'))
-        exchange_option = data.get('exchange_option', '').strip()
-        is_exchange = bool(exchange_option and exchange_option.lower() != 'пропустити')
+        # Визначаємо тип операції
+        is_sale, is_exchange = self._determine_sale_or_exchange(data)
         
         lines = [
             f"{emoji} {data['title']}",
             f"• Залишок: {percent}% ({condition})",
             f"• Відкрито: {formatted_dates}",
             f"• Чому продаю: {data.get('reason', 'не моє')}",
-            f"• Про засіб: {data.get('user_description', 'засіб з амбіціями')}",
+            f"• Про засіб: {data.get('description', 'засіб з амбіціями')}",
             f"• Шкіра: {data.get('skin_type', 'різна')}"
         ]
         
+        # Додаємо рядок з ціною або обміном
         if is_sale:
-            lines.append(f"• Ціна: {data['price_buy']} → {data['price_sell']} грн")
+            lines.append(self._generate_price_line(data))
         elif is_exchange:
-            lines.append(f"• Обмін: {exchange_option}")
+            lines.append(self._generate_exchange_line(data))
+        else:
+            lines.append("• Ціна: договірна (пишіть, домовимося)")
         
         lines.append(f"• Локація: {data.get('city', '')}, доставка: {data.get('delivery', '')}")
         lines.append(self._select_hashtags(data))
