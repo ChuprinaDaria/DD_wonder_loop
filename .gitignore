@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+google_vision_key.json
