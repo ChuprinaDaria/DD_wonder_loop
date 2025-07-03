@@ -1,5 +1,7 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import Bot
+from typing import Optional
+
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Головна клавіатура"""
@@ -132,19 +134,24 @@ def get_moderation_keyboard(lot_id: int) -> InlineKeyboardMarkup:
     )
     return keyboard
 
-def get_contact_seller_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Клавіатура для зв'язку з продавцем"""
-    keyboard = InlineKeyboardMarkup(
+def get_contact_seller_keyboard(user_id: int, username: Optional[str] = None) -> InlineKeyboardMarkup:
+    """Клавіатура для зв'язку з продавцем (адаптована під десктоп і мобілки)"""
+    if username:
+        url = f"https://t.me/{username}"
+    else:
+        url = f"tg://user?id={user_id}"  # fallback для мобілок без username
+
+    return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💬 Зв'язатися з продавцем", 
-                    url=f"tg://user?id={user_id}"
+                    text="💬 Зв'язатися з продавцем",
+                    url=url
                 )
             ]
         ]
     )
-    return keyboard
+
 
 def get_status_buttons(lot_id: int, current_status: str) -> InlineKeyboardMarkup:
     buttons = []
