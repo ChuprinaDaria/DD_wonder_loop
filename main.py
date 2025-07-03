@@ -84,7 +84,8 @@ async def main():
     finally:
         if 'db_manager' in locals():
             await db_manager.close()
-
+        if 'openai_service' in locals():
+            await openai_service.close()
         print(f"[DEBUG] Зареєстровані callback-хендлери: {dp.callback_query.outer_middleware}")
 
 

@@ -9,7 +9,8 @@ from aiogram.types import FSInputFile
 import re
 import asyncio
 from aiogram import Bot
-
+from openai import AsyncOpenAI 
+import httpx
 
 
 
@@ -19,7 +20,14 @@ import random
 
 class OpenAIService:
     def __init__(self, api_key):
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.http_client = httpx.AsyncClient()  # ← кастомний клієнт без проксі
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            http_client=self.http_client
+        )
+
+    async def close(self):
+        await self.http_client.aclose()  
 
     def _get_category_emoji(self, category: str) -> str:
         mapping = {
@@ -340,6 +348,7 @@ class OpenAIService:
         
         result = '\n'.join(lines)
         return result[:950] if len(result) > 950 else result
+        
 
 
 
