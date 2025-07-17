@@ -137,7 +137,7 @@ class OpenAIService:
         # Варіанти дотепних коментарів для ціни
         price_comments = [
             "відпущу в люди за символічну плату",
-            "нехай живе у когось іншого",
+            "нехай живе у kogось іншого",
             "віддаю майже задарма",
             "хоч щось повернути",
             "краще в добрі руки ніж в шухляду",
@@ -190,7 +190,7 @@ class OpenAIService:
 
 КРИТИЧНО ВАЖЛИВО - СТРУКТУРА ВИВОДУ:
 Структура ОБОВ'ЯЗКОВА (кожен рядок крім першого з "• "):
-{emoji} *{назва}*
+{emoji} {назва}
 • Залишок: {відсоток}% ({метафора})
 • Відкрито: {креативний опис дат}
 • Чому продаю: {іронічна причина}
@@ -202,9 +202,9 @@ class OpenAIService:
 {хештеги в окремому рядку}
 
 ФОРМАТУВАННЯ:
-- Назва ОБОВ'ЯЗКОВО в зірочках: *назва продукту*
+- Назва БЕЗ зірочок: {назва продукту}
 - Хештеги завжди в окремому рядку в кінці
-- Зберігай всі зірочки навколо назви
+- Не використовувати зірочки навколо назви
 
 СТИЛЬ:
 - Іронія та легке розчарування
@@ -298,11 +298,8 @@ class OpenAIService:
             if not result.startswith(emoji):
                 lines = result.split('\n')
                 if lines[0] and not any(e in lines[0] for e in ['🧴', '🧼', '🧖‍♀️', '⚙️', '✨']):
-                    # Перевіряємо чи назва вже в зірочках
-                    if '*' in lines[0]:
-                        lines[0] = f"{emoji} {lines[0]}"
-                    else:
-                        lines[0] = f"{emoji} *{lines[0]}*"
+                    # Додаємо емоджі БЕЗ зірочок
+                    lines[0] = f"{emoji} {data['title']}"
                     result = '\n'.join(lines)
             
             # Перевіряємо чи хештеги в окремому рядку в кінці
@@ -358,7 +355,7 @@ class OpenAIService:
         is_sale, is_exchange = self._determine_sale_or_exchange(data)
         
         lines = [
-            f"{emoji} *{data['title']}*",  # Назва в зірочках
+            f"{emoji} {data['title']}",  # Назва БЕЗ зірочок
             f"• Залишок: {percent}% ({condition})",
             f"• Відкрито: {formatted_dates}",
             f"• Чому продаю: {data.get('reason', 'не моє')}",
@@ -454,7 +451,7 @@ class GoogleVisionService:
             if width < 200 or height < 200:
                 return False, "Зображення занадто мале"
             
-            # Конвертуємо в сірий для аналізу
+            # Конвертуємо в сірий для базової перевірки
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
             # Перевірка на повністю чорне зображення
@@ -470,82 +467,86 @@ class GoogleVisionService:
             if laplacian_var < 50:
                 return False, "Зображення занадто розмите"
             
+            # Покращена перевірка на темний фон
+            is_dark_bg, dark_reason = self._check_dark_background(img)
+            if is_dark_bg:
+                return False, dark_reason
+            
             return True, "Якість зображення прийнятна"
             
         except Exception as e:
             return False, f"Помилка перевірки якості: {str(e)}"
 
-    async def _check_inappropriate_content(self, content: bytes) -> tuple[bool, str]:
-        """Перевірка на неприпустимий контент через Google Vision API"""
+    def _check_dark_background(self, img) -> tuple[bool, str]:
+        """Перевірка на темний фон з урахуванням кольорів"""
         try:
-            image = vision.Image(content=content)
-            response = self.client.safe_search_detection(image=image)
-            safe = response.safe_search_annotation
-
-            if response.error.message:
-                print(f"⚠️ [Vision] Vision API помилка: {response.error.message}")
-                return True, "API недоступний, пропускаємо"
-
-            print("🔎 [Vision] SafeSearch результати:")
-            print(f"    adult: {safe.adult.name}")
-            print(f"    racy: {safe.racy.name}")
-            print(f"    violence: {safe.violence.name}")
-
-            # Блокуємо тільки явно неприпустимий контент
-            if safe.adult.name in ["LIKELY", "VERY_LIKELY"]:
-                return False, "Виявлено контент для дорослих"
-            if safe.racy.name in ["LIKELY", "VERY_LIKELY"]:
-                return False, "Виявлено провокативний контент"
-            if safe.violence.name in ["LIKELY", "VERY_LIKELY"]:
-                return False, "Виявлено насильницький контент"
+            h, w = img.shape[:2]
             
-            return True, "SafeSearch пройдено"
+            # Аналізуємо кути зображення як можливий фон
+            corners = [
+                img[0:h//3, 0:w//3],  # верхній лівий
+                img[0:h//3, 2*w//3:w],  # верхній правий
+                img[2*h//3:h, 0:w//3],  # нижній лівий
+                img[2*h//3:h, 2*w//3:w]  # нижній правий
+            ]
+            
+            # Додатково аналізуємо краї
+            edges = [
+                img[0:h//10, :],  # верхній край
+                img[9*h//10:h, :],  # нижній край
+                img[:, 0:w//10],  # лівий край
+                img[:, 9*w//10:w]  # правий край
+            ]
+            
+            all_regions = corners + edges
+            
+            dark_regions = 0
+            total_regions = len(all_regions)
+            
+            for region in all_regions:
+                # Конвертуємо в HSV для кращого аналізу яскравості
+                hsv_region = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+                
+                # Витягуємо канал яскравості (V в HSV)
+                brightness = hsv_region[:, :, 2]
+                avg_brightness = np.mean(brightness)
+                
+                # Також перевіряємо RGB канали окремо
+                b_channel = np.mean(region[:, :, 0])  # Blue
+                g_channel = np.mean(region[:, :, 1])  # Green  
+                r_channel = np.mean(region[:, :, 2])  # Red
+                
+                # Середня яскравість RGB
+                rgb_brightness = (b_channel + g_channel + r_channel) / 3
+                
+                # Перевіряємо на темність по різним критеріям
+                is_dark = (
+                    avg_brightness < 80 or  # HSV яскравість
+                    rgb_brightness < 70 or  # RGB яскравість
+                    (max(b_channel, g_channel, r_channel) < 90)  # Найяскравіший канал
+                )
+                
+                if is_dark:
+                    dark_regions += 1
+            
+            # Якщо більше 60% регіонів темні - вважаємо фон темним
+            if dark_regions / total_regions > 0.6:
+                return True, "Виявлено темний фон"
+            
+            # Додаткова перевірка на загальну темність всього зображення
+            hsv_full = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            overall_brightness = np.mean(hsv_full[:, :, 2])
+            
+            if overall_brightness < 60:
+                return True, "Зображення загалом занадто темне"
+            
+            return False, "Фон достатньо світлий"
             
         except Exception as e:
-            print(f"⚠️ [Vision] Помилка Vision API: {e}")
-            # Якщо API недоступний, пропускаємо перевірку
-            return True, "API недоступний, пропускаємо"
-
-    async def _check_for_people(self, content: bytes) -> tuple[bool, str]:
-        """Перевірка на присутність людей"""
-        try:
-            image = vision.Image(content=content)
-            
-            # Перевірка на обличчя
-            face_response = self.client.face_detection(image=image)
-            faces = face_response.face_annotations
-            
-            if face_response.error.message:
-                print(f"⚠️ [Vision] Face detection помилка: {face_response.error.message}")
-                return True, "Face detection недоступний"
-            
-            # Блокуємо тільки якщо впевнено виявлено обличчя
-            confident_faces = [f for f in faces if f.detection_confidence > 0.7]
-            if len(confident_faces) > 0:
-                return False, "Виявлено обличчя на зображенні"
-            
-            # Перевірка на людей через object detection
-            object_response = self.client.object_localization(image=image)
-            objects = object_response.localized_object_annotations
-            
-            if object_response.error.message:
-                print(f"⚠️ [Vision] Object detection помилка: {object_response.error.message}")
-                return True, "Object detection недоступний"
-            
-            # Блокуємо тільки явно виявлених людей з високою впевненістю
-            for obj in objects:
-                if obj.name in ["Person", "Human body", "Human face"] and obj.score > 0.8:
-                    return False, f"Виявлено людину: {obj.name}"
-            
-            return True, "Люди не виявлені"
-            
-        except Exception as e:
-            print(f"⚠️ [Vision] Помилка перевірки людей: {e}")
-            # Якщо API недоступний, пропускаємо перевірку
-            return True, "API недоступний, пропускаємо"
+            return True, f"Помилка перевірки фону: {str(e)}"
 
     async def is_background_light(self, file_id: str, bot) -> bool:
-        """Визначає, чи фон зображення світлий"""
+        """Визначає, чи фон зображення світлий (покращена версія)"""
         try:
             file = await bot.get_file(file_id)
             file_path = file.file_path
@@ -562,87 +563,14 @@ class GoogleVisionService:
                 image_path = temp_file.name
 
             img = cv2.imread(image_path)
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # Аналіз кутів зображення як можливого фону
-            h, w = gray.shape
-            corners = [
-                gray[0:h//3, 0:w//3],  # верхній лівий
-                gray[0:h//3, 2*w//3:w],  # верхній правий
-                gray[2*h//3:h, 0:w//3],  # нижній лівий
-                gray[2*h//3:h, 2*w//3:w]  # нижній правий
-            ]
+            # Використовуємо нашу покращену функцію перевірки
+            is_dark, _ = self._check_dark_background(img)
             
-            corner_brightness = [np.mean(corner) for corner in corners]
-            avg_brightness = np.mean(corner_brightness)
-
             os.remove(image_path)
             
-            return avg_brightness > 120  # М'якший поріг
+            return not is_dark  # Повертаємо True, якщо фон НЕ темний
             
         except Exception as e:
             print(f"Помилка перевірки фону: {e}")
             return False
-
-    def add_watermark(self, image_path: str, output_path: str, config) -> None:
-        """Додає ватермарку на зображення"""
-        base = Image.open(image_path).convert("RGBA")
-        watermark = Image.open(config.WATERMARK_PATH).convert("RGBA")
-
-        scale_ratio = min(base.size[0] / (4 * watermark.size[0]), 1.0)
-        new_size = (int(watermark.size[0] * scale_ratio), int(watermark.size[1] * scale_ratio))
-        watermark = watermark.resize(new_size, Image.LANCZOS)
-
-        alpha = watermark.split()[3]
-        alpha = ImageEnhance.Brightness(alpha).enhance(config.WATERMARK_OPACITY)
-        watermark.putalpha(alpha)
-
-        margin = 10
-        if config.WATERMARK_POSITION == "bottom_right":
-            position = (base.size[0] - watermark.size[0] - margin, base.size[1] - watermark.size[1] - margin)
-        elif config.WATERMARK_POSITION == "bottom_left":
-            position = (margin, base.size[1] - watermark.size[1] - margin)
-        elif config.WATERMARK_POSITION == "top_right":
-            position = (base.size[0] - watermark.size[0] - margin, margin)
-        else:
-            position = (margin, margin)
-
-        base.paste(watermark, position, watermark)
-        base.convert("RGB").save(output_path, "JPEG")
-
-    async def add_watermark_from_file_id(self, file_id: str, bot) -> str:
-        """Скачує фото по file_id, додає ватермарк, повертає новий file_id"""
-        try:
-            config = bot.config
-            file = await bot.get_file(file_id)
-            photo_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(photo_url) as resp:
-                    if resp.status != 200:
-                        return file_id
-                    content = await resp.read()
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_input:
-                temp_input.write(content)
-                temp_input_path = temp_input.name
-
-            temp_output_path = temp_input_path.replace(".jpg", "_wm.jpg")
-
-            self.add_watermark(temp_input_path, temp_output_path, config)
-
-            sent = await bot.send_photo(
-                chat_id=bot.config.WATERMARK_TEMP_CHAT_ID or bot.config.CHANNEL_ID,
-                photo=FSInputFile(temp_output_path),
-                disable_notification=True
-            )
-            new_file_id = sent.photo[-1].file_id
-
-            os.remove(temp_input_path)
-            os.remove(temp_output_path)
-
-            return new_file_id
-
-        except Exception as e:
-            print(f"❌ Помилка при додаванні ватермарки: {e}")
-            return file_id
