@@ -598,7 +598,7 @@ async def process_photos(message: Message, state: FSMContext):
     # Підтверджуємо прийняття фото
     await message.answer(
         f"✅ Фото #{len(images)} додано!\n\n"
-        "Можете надіслати ще фотографії або натиснути кнопку 'Продовжити'"
+        
     )
    
 

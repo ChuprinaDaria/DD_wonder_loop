@@ -439,6 +439,40 @@ class GoogleVisionService:
         except Exception as e:
             print(f"❌ [Vision] Помилка при перевірці: {e}")
             return False, f"Технічна помилка: {str(e)}"
+        
+    async def _check_with_vision_api(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка через Google Vision API з жорсткими правилами"""
+        try:
+            image = vision.Image(content=content)
+            response = self.client.safe_search_detection(image=image)
+            safe = response.safe_search_annotation
+
+            if response.error.message:
+                return False, f"Помилка API: {response.error.message}"
+
+            print("🔎 [Vision] SafeSearch результати:")
+            print(f"    adult: {safe.adult.name}")
+            print(f"    racy: {safe.racy.name}")
+            print(f"    violence: {safe.violence.name}")
+            print(f"    spoof: {safe.spoof.name}")
+            print(f"    medical: {safe.medical.name}")
+
+            # Жорсткі правила - навіть "POSSIBLE" не пропускаємо
+            strict_thresholds = ["POSSIBLE", "LIKELY", "VERY_LIKELY"]
+            
+            if safe.adult.name in strict_thresholds:
+                return False, "Виявлено контент для дорослих"
+            if safe.racy.name in strict_thresholds:
+                return False, "Виявлено провокативний контент"
+            if safe.violence.name in strict_thresholds:
+                return False, "Виявлено насильницький контент"
+            if safe.medical.name in ["LIKELY", "VERY_LIKELY"]:
+                return False, "Виявлено медичний контент"
+            
+            return True, "SafeSearch пройдено"
+            
+        except Exception as e:
+            return False, f"Помилка Vision API: {str(e)}"
 
     def _check_image_quality(self, image_path: str) -> tuple[bool, str]:
         """Базова перевірка якості зображення"""
