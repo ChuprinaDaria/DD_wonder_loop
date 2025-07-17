@@ -474,7 +474,7 @@ class GoogleVisionService:
             
             # Перевірка контрасту
             contrast = np.std(gray)
-            if contrast < 30:  # Низький контраст
+            if contrast < 10:  # Низький контраст
                 return False, "Зображення має низький контраст"
             
             # Перевірка на переекспонування
@@ -503,7 +503,7 @@ class GoogleVisionService:
             edges = cv2.Canny(gray, 50, 150)
             edge_density = np.sum(edges > 0) / edges.size
             
-            if edge_density > 0.15:  # Занадто багато деталей у фоні
+            if edge_density > 0.35:  # Занадто багато деталей у фоні
                 return False, "Фон занадто складний або захаращений"
             
             # Перевірка однорідності фону
@@ -519,7 +519,7 @@ class GoogleVisionService:
                     uniformity_scores.append(std)
             
             mean_uniformity = np.mean(uniformity_scores)
-            if mean_uniformity > 50:  # Фон не однорідний
+            if mean_uniformity > 70:  # Фон не однорідний
                 return False, "Фон не однорідний"
             
             return True, "Фон відповідає вимогам"
@@ -607,7 +607,7 @@ class GoogleVisionService:
             dark_pixels = np.sum(v_channel < 60)
             total_pixels = v_channel.size
             
-            if dark_pixels / total_pixels > 0.6:
+            if dark_pixels / total_pixels > 0.8:
                 return False, "Зображення занадто темне (переважають темні кольори)"
             
             # Перевірка на монохромність
@@ -615,7 +615,7 @@ class GoogleVisionService:
             
             # Якщо стандартне відхилення між каналами мале, то зображення монохромне
             channel_std = np.std([np.mean(b), np.mean(g), np.mean(r)])
-            if channel_std < 10:
+            if channel_std < 7:
                 return False, "Зображення занадто монохромне"
             
             return True, "Розподіл кольорів прийнятний"
