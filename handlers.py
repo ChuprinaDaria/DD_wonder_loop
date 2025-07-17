@@ -548,46 +548,58 @@ async def process_photos(message: Message, state: FSMContext):
     current = await state.get_state()
     if current != LotStates.waiting_for_photos:
         return
-
+     
     """Обробка фотографій"""
     data = await state.get_data()
-    images = data.get('images', [])  # 🔄 беремо `images` замість `photos`
+    images = data.get('images', [])
     photo_message_ids = data.get('photo_message_ids', [])
     photo_message_ids.append(message.message_id)
-
+    
     # Отримуємо найкращу якість фото
     photo = message.photo[-1]
-
+    
     # Перевіряємо фото через Google Vision
     vision_service = message.bot.vision
     try:
         is_valid, reason = await vision_service.validate_photo(photo.file_id, message.bot)
-
+        
         if not is_valid:
             await message.answer(
                 "❌ Фото не пройшло перевірку!\n\n"
+                f"Причина: {reason}\n\n"
                 "Переконайтеся що:\n"
-                "• Фон білий або нейтральний\n"
-                "• Немає сторонніх предметів, частин тіла\n"
-                "• Товар чітко видно\n\n"
+                "• Фото чітке і не розмите\n"
+                "• Немає людей або частин тіла\n"
+                "• Товар добре видно\n"
+                "• Відсутній неприпустимий контент\n\n"
                 "Надішліть інше фото:"
             )
             return
+            
+        print(f"✅ [Handler] Фото пройшло перевірку: {reason}")
+        
     except Exception as e:
         logger.error(f"Помилка при перевірці фото: {e}")
+        print(f"⚠️ [Handler] Перевірка недоступна, пропускаємо: {e}")
         # Продовжуємо без перевірки якщо сервіс недоступний
-
+    
     # Додаємо водяний знак
     try:
         processed_photo = await vision_service.add_watermark_from_file_id(photo.file_id, message.bot)
-
         images.append(processed_photo)
+        print(f"✅ [Handler] Додано ватермарк до фото")
     except Exception as e:
         logger.error(f"Помилка при додаванні водяного знаку: {e}")
         images.append(photo.file_id)
-
+        print(f"⚠️ [Handler] Використовуємо оригінальне фото без ватермарку")
+    
     await state.update_data(images=images, photo_message_ids=photo_message_ids)
-
+    
+    # Підтверджуємо прийняття фото
+    await message.answer(
+        f"✅ Фото #{len(images)} додано!\n\n"
+        "Можете надіслати ще фотографії або натиснути кнопку 'Продовжити'"
+    )
    
 
     # Кнопки навігації

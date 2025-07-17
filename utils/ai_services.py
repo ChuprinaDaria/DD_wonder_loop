@@ -396,8 +396,8 @@ class GoogleVisionService:
         self.client = vision.ImageAnnotatorClient.from_service_account_file(service_account_path)
 
     async def validate_photo(self, file_id: str, bot) -> tuple[bool, str]:
-        """Жорстка перевірка зображення на відповідність правилам"""
-        print("🔍 [Vision] Починаємо жорстку перевірку фото...")
+        """Перевірка зображення на відповідність правилам для товарів"""
+        print("🔍 [Vision] Починаємо перевірку фото товару...")
 
         try:
             file = await bot.get_file(file_id)
@@ -416,35 +416,23 @@ class GoogleVisionService:
                 temp_file.write(content)
                 image_path = temp_file.name
 
-            # 1. Перевірка яскравості та контрасту
-            brightness_ok, brightness_reason = self._check_brightness_and_contrast(image_path)
-            if not brightness_ok:
+            # 1. Перевірка базової якості зображення
+            quality_ok, quality_reason = self._check_image_quality(image_path)
+            if not quality_ok:
                 os.remove(image_path)
-                return False, brightness_reason
+                return False, quality_reason
 
-            # 2. Перевірка фону
-            background_ok, background_reason = self._check_background_quality(image_path)
-            if not background_ok:
-                os.remove(image_path)
-                return False, background_reason
-
-            # 3. Перевірка через Google Vision API
-            vision_ok, vision_reason = await self._check_with_vision_api(content)
+            # 2. Перевірка через Google Vision API на неприпустимий контент
+            vision_ok, vision_reason = await self._check_inappropriate_content(content)
             if not vision_ok:
                 os.remove(image_path)
                 return False, vision_reason
 
-            # 4. Перевірка на частини тіла/обличчя
-            body_ok, body_reason = await self._check_body_parts(content)
-            if not body_ok:
+            # 3. Перевірка на людей/обличчя
+            people_ok, people_reason = await self._check_for_people(content)
+            if not people_ok:
                 os.remove(image_path)
-                return False, body_reason
-
-            # 5. Перевірка кольорової гами
-            color_ok, color_reason = self._check_color_distribution(image_path)
-            if not color_ok:
-                os.remove(image_path)
-                return False, color_reason
+                return False, people_reason
 
             os.remove(image_path)
             print("✅ [Vision] Фото пройшло всі перевірки.")
@@ -454,115 +442,72 @@ class GoogleVisionService:
             print(f"❌ [Vision] Помилка при перевірці: {e}")
             return False, f"Технічна помилка: {str(e)}"
 
-    def _check_brightness_and_contrast(self, image_path: str) -> tuple[bool, str]:
-        """Перевірка яскравості та контрасту"""
+    def _check_image_quality(self, image_path: str) -> tuple[bool, str]:
+        """Базова перевірка якості зображення"""
         try:
-            # Використовуємо OpenCV для більш точної перевірки
             img = cv2.imread(image_path)
             if img is None:
                 return False, "Неможливо прочитати зображення"
             
+            # Перевірка розміру
+            height, width = img.shape[:2]
+            if width < 200 or height < 200:
+                return False, "Зображення занадто мале"
+            
             # Конвертуємо в сірий для аналізу
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # Перевірка середньої яскравості
-            mean_brightness = np.mean(gray)
-            if mean_brightness < 80:  # Занадто темно
+            # Перевірка на повністю чорне зображення
+            if np.max(gray) < 30:
                 return False, "Зображення занадто темне"
-            if mean_brightness > 240:  # Занадто світло
+            
+            # Перевірка на повністю біле зображення
+            if np.min(gray) > 240:
                 return False, "Зображення занадто світле"
             
-            # Перевірка контрасту
-            contrast = np.std(gray)
-            if contrast < 10:  # Низький контраст
-                return False, "Зображення має низький контраст"
+            # Перевірка на розмитість
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            if laplacian_var < 50:
+                return False, "Зображення занадто розмите"
             
-            # Перевірка на переекспонування
-            overexposed_pixels = np.sum(gray > 250)
-            total_pixels = gray.size
-            if overexposed_pixels / total_pixels > 0.1:  # Більше 10% переекспонованих пікселів
-                return False, "Зображення переекспоноване"
-            
-            # Перевірка на недоекспонування
-            underexposed_pixels = np.sum(gray < 10)
-            if underexposed_pixels / total_pixels > 0.1:  # Більше 10% недоекспонованих пікселів
-                return False, "Зображення недоекспоноване"
-            
-            return True, "Яскравість і контраст в нормі"
+            return True, "Якість зображення прийнятна"
             
         except Exception as e:
-            return False, f"Помилка перевірки яскравості: {str(e)}"
+            return False, f"Помилка перевірки якості: {str(e)}"
 
-    def _check_background_quality(self, image_path: str) -> tuple[bool, str]:
-        """Перевірка якості фону"""
-        try:
-            img = cv2.imread(image_path)
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
-            # Виявлення країв для оцінки складності фону
-            edges = cv2.Canny(gray, 50, 150)
-            edge_density = np.sum(edges > 0) / edges.size
-            
-            if edge_density > 0.35:  # Занадто багато деталей у фоні
-                return False, "Фон занадто складний або захаращений"
-            
-            # Перевірка однорідності фону
-            # Розділяємо зображення на блоки та перевіряємо однорідність
-            h, w = gray.shape
-            block_size = 50
-            uniformity_scores = []
-            
-            for i in range(0, h - block_size, block_size):
-                for j in range(0, w - block_size, block_size):
-                    block = gray[i:i+block_size, j:j+block_size]
-                    std = np.std(block)
-                    uniformity_scores.append(std)
-            
-            mean_uniformity = np.mean(uniformity_scores)
-            if mean_uniformity > 70:  # Фон не однорідний
-                return False, "Фон не однорідний"
-            
-            return True, "Фон відповідає вимогам"
-            
-        except Exception as e:
-            return False, f"Помилка перевірки фону: {str(e)}"
-
-    async def _check_with_vision_api(self, content: bytes) -> tuple[bool, str]:
-        """Перевірка через Google Vision API з жорсткими правилами"""
+    async def _check_inappropriate_content(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на неприпустимий контент через Google Vision API"""
         try:
             image = vision.Image(content=content)
             response = self.client.safe_search_detection(image=image)
             safe = response.safe_search_annotation
 
             if response.error.message:
-                return False, f"Помилка API: {response.error.message}"
+                print(f"⚠️ [Vision] Vision API помилка: {response.error.message}")
+                return True, "API недоступний, пропускаємо"
 
             print("🔎 [Vision] SafeSearch результати:")
             print(f"    adult: {safe.adult.name}")
             print(f"    racy: {safe.racy.name}")
             print(f"    violence: {safe.violence.name}")
-            print(f"    spoof: {safe.spoof.name}")
-            print(f"    medical: {safe.medical.name}")
 
-            # Жорсткі правила - навіть "POSSIBLE" не пропускаємо
-            strict_thresholds = ["POSSIBLE", "LIKELY", "VERY_LIKELY"]
-            
-            if safe.adult.name in strict_thresholds:
+            # Блокуємо тільки явно неприпустимий контент
+            if safe.adult.name in ["LIKELY", "VERY_LIKELY"]:
                 return False, "Виявлено контент для дорослих"
-            if safe.racy.name in strict_thresholds:
+            if safe.racy.name in ["LIKELY", "VERY_LIKELY"]:
                 return False, "Виявлено провокативний контент"
-            if safe.violence.name in strict_thresholds:
+            if safe.violence.name in ["LIKELY", "VERY_LIKELY"]:
                 return False, "Виявлено насильницький контент"
-            if safe.medical.name in ["LIKELY", "VERY_LIKELY"]:
-                return False, "Виявлено медичний контент"
             
             return True, "SafeSearch пройдено"
             
         except Exception as e:
-            return False, f"Помилка Vision API: {str(e)}"
+            print(f"⚠️ [Vision] Помилка Vision API: {e}")
+            # Якщо API недоступний, пропускаємо перевірку
+            return True, "API недоступний, пропускаємо"
 
-    async def _check_body_parts(self, content: bytes) -> tuple[bool, str]:
-        """Перевірка на частини тіла через Face Detection та Object Detection"""
+    async def _check_for_people(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на присутність людей"""
         try:
             image = vision.Image(content=content)
             
@@ -570,61 +515,37 @@ class GoogleVisionService:
             face_response = self.client.face_detection(image=image)
             faces = face_response.face_annotations
             
-            if len(faces) > 0:
+            if face_response.error.message:
+                print(f"⚠️ [Vision] Face detection помилка: {face_response.error.message}")
+                return True, "Face detection недоступний"
+            
+            # Блокуємо тільки якщо впевнено виявлено обличчя
+            confident_faces = [f for f in faces if f.detection_confidence > 0.7]
+            if len(confident_faces) > 0:
                 return False, "Виявлено обличчя на зображенні"
             
-            # Перевірка на об'єкти (включаючи частини тіла)
+            # Перевірка на людей через object detection
             object_response = self.client.object_localization(image=image)
             objects = object_response.localized_object_annotations
             
-            # Список заборонених об'єктів
-            forbidden_objects = [
-                "Person", "Human body", "Human face", "Human head", 
-                "Human hand", "Human foot", "Human leg", "Human arm",
-                "Man", "Woman", "Child", "Baby", "Human eye", "Human hair",
-                "Clothing", "Dress", "Shirt", "Pants", "Shoe", "Hat"
-            ]
+            if object_response.error.message:
+                print(f"⚠️ [Vision] Object detection помилка: {object_response.error.message}")
+                return True, "Object detection недоступний"
             
+            # Блокуємо тільки явно виявлених людей з високою впевненістю
             for obj in objects:
-                if obj.name in forbidden_objects and obj.score > 0.3:
-                    return False, f"Виявлено заборонений об'єкт: {obj.name}"
+                if obj.name in ["Person", "Human body", "Human face"] and obj.score > 0.8:
+                    return False, f"Виявлено людину: {obj.name}"
             
-            return True, "Частини тіла не виявлено"
-            
-        except Exception as e:
-            return False, f"Помилка перевірки частин тіла: {str(e)}"
-
-    def _check_color_distribution(self, image_path: str) -> tuple[bool, str]:
-        """Перевірка розподілу кольорів"""
-        try:
-            img = cv2.imread(image_path)
-            
-            # Перевірка на переважно темні кольори
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            v_channel = hsv[:, :, 2]  # Value channel
-            
-            # Якщо більше 60% пікселів темні
-            dark_pixels = np.sum(v_channel < 60)
-            total_pixels = v_channel.size
-            
-            if dark_pixels / total_pixels > 0.8:
-                return False, "Зображення занадто темне (переважають темні кольори)"
-            
-            # Перевірка на монохромність
-            b, g, r = cv2.split(img)
-            
-            # Якщо стандартне відхилення між каналами мале, то зображення монохромне
-            channel_std = np.std([np.mean(b), np.mean(g), np.mean(r)])
-            if channel_std < 7:
-                return False, "Зображення занадто монохромне"
-            
-            return True, "Розподіл кольорів прийнятний"
+            return True, "Люди не виявлені"
             
         except Exception as e:
-            return False, f"Помилка перевірки кольорів: {str(e)}"
+            print(f"⚠️ [Vision] Помилка перевірки людей: {e}")
+            # Якщо API недоступний, пропускаємо перевірку
+            return True, "API недоступний, пропускаємо"
 
     async def is_background_light(self, file_id: str, bot) -> bool:
-        """Визначає, чи фон зображення світлий (оновлена версія)"""
+        """Визначає, чи фон зображення світлий"""
         try:
             file = await bot.get_file(file_id)
             file_path = file.file_path
@@ -640,24 +561,29 @@ class GoogleVisionService:
                 temp_file.write(content)
                 image_path = temp_file.name
 
-            # Використовуємо OpenCV для більш точної оцінки
             img = cv2.imread(image_path)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # Аналіз центральної частини як можливого фону
+            # Аналіз кутів зображення як можливого фону
             h, w = gray.shape
-            center_region = gray[h//4:3*h//4, w//4:3*w//4]
-            brightness = np.mean(center_region)
+            corners = [
+                gray[0:h//3, 0:w//3],  # верхній лівий
+                gray[0:h//3, 2*w//3:w],  # верхній правий
+                gray[2*h//3:h, 0:w//3],  # нижній лівий
+                gray[2*h//3:h, 2*w//3:w]  # нижній правий
+            ]
+            
+            corner_brightness = [np.mean(corner) for corner in corners]
+            avg_brightness = np.mean(corner_brightness)
 
             os.remove(image_path)
             
-            return brightness > 140  # Підвищили поріг для більш світлого фону
+            return avg_brightness > 120  # М'якший поріг
             
         except Exception as e:
             print(f"Помилка перевірки фону: {e}")
             return False
 
-    # Решта методів залишаються без змін
     def add_watermark(self, image_path: str, output_path: str, config) -> None:
         """Додає ватермарку на зображення"""
         base = Image.open(image_path).convert("RGBA")
