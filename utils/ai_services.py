@@ -420,7 +420,8 @@ class GoogleVisionService:
                 return False, quality_reason
 
             # 2. Перевірка через Google Vision API на неприпустимий контент
-            vision_ok, vision_reason = await self._check_inappropriate_content(content)
+            vision_ok, vision_reason = await self._check_with_vision_api(content)
+
             if not vision_ok:
                 os.remove(image_path)
                 return False, vision_reason
