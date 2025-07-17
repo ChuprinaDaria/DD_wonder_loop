@@ -439,7 +439,41 @@ class GoogleVisionService:
         except Exception as e:
             print(f"❌ [Vision] Помилка при перевірці: {e}")
             return False, f"Технічна помилка: {str(e)}"
-        
+
+    async def _check_for_people(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на наявність людей або частин тіла"""
+        try:
+            image = vision.Image(content=content)
+
+            # Перевірка на обличчя
+            face_response = self.client.face_detection(image=image)
+            faces = face_response.face_annotations
+
+            if faces:
+                return False, "Виявлено обличчя на зображенні"
+
+            # Перевірка на частини тіла / людей
+            object_response = self.client.object_localization(image=image)
+            objects = object_response.localized_object_annotations
+
+            forbidden_objects = {
+                "Person", "Human body", "Human face", "Human head", 
+                "Human hand", "Human foot", "Human leg", "Human arm",
+                "Man", "Woman", "Child", "Baby", "Human eye", "Human hair",
+                "Clothing", "Shirt", "Pants", "Hat", "Shoe", "Dress"
+            }
+
+            for obj in objects:
+                if obj.name in forbidden_objects and obj.score > 0.4:
+                    return False, f"Виявлено частину тіла або людину: {obj.name}"
+
+            return True, "Людей або частин тіла не виявлено"
+
+        except Exception as e:
+            return False, f"Помилка перевірки людей: {str(e)}"
+
+
+
     async def _check_with_vision_api(self, content: bytes) -> tuple[bool, str]:
         """Перевірка через Google Vision API з жорсткими правилами"""
         try:
