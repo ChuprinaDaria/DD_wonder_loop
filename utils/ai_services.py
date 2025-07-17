@@ -272,7 +272,7 @@ class OpenAIService:
 РЯДОК ЦІНИ/ОБМІНУ (вставити БЕЗ ЗМІН):
 {price_exchange_line}
 
-ХЕШТЕГИ (вставити в кінці в окремому рядку):
+ХЕШТЕГИ (вставити в кінці в окремому рядку тільки 1 раз):
 {hashtags}
 
 Поверни ТІЛЬКИ адаптований текст у вказаній структурі, БЕЗ пояснень."""
@@ -302,9 +302,7 @@ class OpenAIService:
                     lines[0] = f"{emoji} {data['title']}"
                     result = '\n'.join(lines)
             
-            # Перевіряємо чи хештеги в окремому рядку в кінці
-            if hashtags not in result:
-                result += f"\n\n{hashtags}"
+            
             
             # Перевіряємо довжину та скорочуємо якщо потрібно
             if len(result) > 950:
@@ -643,3 +641,66 @@ class GoogleVisionService:
         except Exception as e:
             print(f"Помилка перевірки фону: {e}")
             return False
+        
+    def add_watermark(self, image_path: str, output_path: str, config) -> None:
+        """Додає ватермарку на зображення"""
+        base = Image.open(image_path).convert("RGBA")
+        watermark = Image.open(config.WATERMARK_PATH).convert("RGBA")
+
+        scale_ratio = min(base.size[0] / (4 * watermark.size[0]), 1.0)
+        new_size = (int(watermark.size[0] * scale_ratio), int(watermark.size[1] * scale_ratio))
+        watermark = watermark.resize(new_size, Image.LANCZOS)
+
+        alpha = watermark.split()[3]
+        alpha = ImageEnhance.Brightness(alpha).enhance(config.WATERMARK_OPACITY)
+        watermark.putalpha(alpha)
+
+        margin = 10
+        if config.WATERMARK_POSITION == "bottom_right":
+            position = (base.size[0] - watermark.size[0] - margin, base.size[1] - watermark.size[1] - margin)
+        elif config.WATERMARK_POSITION == "bottom_left":
+            position = (margin, base.size[1] - watermark.size[1] - margin)
+        elif config.WATERMARK_POSITION == "top_right":
+            position = (base.size[0] - watermark.size[0] - margin, margin)
+        else:
+            position = (margin, margin)
+
+        base.paste(watermark, position, watermark)
+        base.convert("RGB").save(output_path, "JPEG")
+
+    async def add_watermark_from_file_id(self, file_id: str, bot) -> str:
+        """Скачує фото по file_id, додає ватермарк, повертає новий file_id"""
+        try:
+            config = bot.config
+            file = await bot.get_file(file_id)
+            photo_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_url) as resp:
+                    if resp.status != 200:
+                        return file_id
+                    content = await resp.read()
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_input:
+                temp_input.write(content)
+                temp_input_path = temp_input.name
+
+            temp_output_path = temp_input_path.replace(".jpg", "_wm.jpg")
+
+            self.add_watermark(temp_input_path, temp_output_path, config)
+
+            sent = await bot.send_photo(
+                chat_id=bot.config.WATERMARK_TEMP_CHAT_ID or bot.config.CHANNEL_ID,
+                photo=FSInputFile(temp_output_path),
+                disable_notification=True
+            )
+            new_file_id = sent.photo[-1].file_id
+
+            os.remove(temp_input_path)
+            os.remove(temp_output_path)
+
+            return new_file_id
+
+        except Exception as e:
+            print(f"❌ Помилка при додаванні ватермарки: {e}")
+            return file_id
