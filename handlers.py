@@ -364,7 +364,7 @@ async def process_left_percent(message: Message, state: FSMContext):
         
         await state.update_data(left_percent=percent)
         await message.answer(
-            "📅 Коли було відкрито баночку?\n"
+            "📅 Коли було відкрито баночку дата, місяць?\n"
             "<i>(напишіть тільки дату або “не відкрито”  або batch-код)</i>",
             parse_mode="HTML"
         )
@@ -382,7 +382,7 @@ async def process_opened_at(message: Message, state: FSMContext):
     """Обробка часу відкриття"""
     await state.update_data(opened_at=message.text)
     await message.answer(
-        "🗓 Строк придатності, тільки дата:"
+        "🗓 Строк придатності, тільки дата, місяць:"
     )
     await state.set_state(LotStates.waiting_for_expire_at)
 
@@ -410,7 +410,7 @@ async def process_reason(message: Message, state: FSMContext):
     """Обробка причини продажу"""
     await state.update_data(reason=message.text)
     await message.answer(
-        "🧠 Тип шкіри ",
+        "🧠 Для якого типу шкіри засіб",
         reply_markup=get_skin_type_keyboard()
     )
     await state.set_state(LotStates.waiting_for_skin_type)
@@ -561,7 +561,8 @@ async def process_photos(message: Message, state: FSMContext):
     # Перевіряємо фото через Google Vision
     vision_service = message.bot.vision
     try:
-        is_valid = await vision_service.validate_photo(photo.file_id, message.bot)
+        is_valid, reason = await vision_service.validate_photo(photo.file_id, message.bot)
+
         if not is_valid:
             await message.answer(
                 "❌ Фото не пройшло перевірку!\n\n"

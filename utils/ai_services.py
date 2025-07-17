@@ -11,7 +11,8 @@ import asyncio
 from aiogram import Bot
 from openai import AsyncOpenAI 
 import httpx
-
+import cv2
+import numpy as np
 
 
 import openai
@@ -39,20 +40,23 @@ class OpenAIService:
         return mapping.get(category.strip().lower(), "✨")
 
     def _clean_telegram_text(self, text: str) -> str:
-        # Видаляємо markdown форматування
-        cleaned = re.sub(r'[*_`]', '', text)
-        cleaned = re.sub(r'\[.+?\]\(.+?\)', '', cleaned)
+        # НЕ видаляємо зірочки (*) для жирного тексту в Telegram
+        cleaned = re.sub(r'[_`]', '', text)  # Видаляємо тільки підкреслення та код
+        cleaned = re.sub(r'\[.+?\]\(.+?\)', '', cleaned)  # Видаляємо посилання
         return cleaned.strip()
 
     def _select_hashtags(self, data: dict) -> str:
-        """Вибирає 3 найкращі хештеги з наявних"""
+        """Вибирає 3 рандомні хештеги з наявних"""
         all_tags = [
             "#з_любовʼю_відпускаю",
             "#йой_не_моє", 
             "#нюхові_травми",
             "#відкритий_але_живий",
             "#обережно_текстура",
-            "#шось_непонятне_на_дотик"
+            "#шось_непонятне_на_дотик",
+            "#пережив_переїзд",
+            "#впав_і_подряпався",
+            "#йой_чутливі_терміни"
         ]
         
         # Вибираємо 3 випадкові хештеги для варіативності
@@ -62,38 +66,48 @@ class OpenAIService:
     def _format_dates_creatively(self, opened_at: str, expire_at: str) -> str:
         """Створює креативний опис дат відкриття та закінчення"""
         try:
-            # Витягуємо роки з дат
+            import re
+            
+            # Витягуємо роки для розрахунків
             opened_year = None
             expire_year = None
             
             # Знаходимо рік у opened_at
-            import re
             opened_match = re.search(r'20\d{2}', opened_at)
             if opened_match:
-                opened_year = opened_match.group()
+                opened_year = int(opened_match.group())
             
             # Знаходимо рік у expire_at
             expire_match = re.search(r'20\d{2}', expire_at)
             if expire_match:
-                expire_year = expire_match.group()
+                expire_year = int(expire_match.group())
             
+            # Використовуємо оригінальний текст клієнта + креативний жарт
             if opened_year and expire_year:
-                years_left = int(expire_year) - 2025  # поточний рік
+                years_left = expire_year - 2025  # поточний рік
+                
                 if years_left > 0:
-                    return f"відкритий {opened_year}, але ще тримається до {expire_year} (живе {years_left} {'рік' if years_left == 1 else 'роки'})"
+                    joke = f"живе {years_left} {'рік' if years_left == 1 else 'роки'}"
                 elif years_left == 0:
-                    return f"відкритий {opened_year}, термін до {expire_year} (останній рік)"
+                    joke = "останній рік, тримається"
                 else:
-                    return f"відкритий {opened_year}, термін минув у {expire_year} (але ще живий)"
-            elif opened_year:
-                return f"відкритий {opened_year}, термін не дихає на спину"
+                    joke = "термін минув, але ще дихає"
+                    
+                return f"відкритий {opened_at}, діє до {expire_at} ({joke})"
+                
+            elif "закрито" in opened_at.lower() or "закрит" in opened_at.lower():
+                return f"{opened_at}, до {expire_at} (спить як красуня)"
+            
+            elif not opened_year and not expire_year:
+                # Якщо немає років взагалі
+                return f"{opened_at}, до {expire_at} (в такому стилі)"
+                
             else:
-                # Якщо немає років, робимо креативний опис
-                if "закрито" in opened_at.lower():
-                    return f"закритий, до {expire_at} (спить як красуня)"
-                else:
-                    return f"{opened_at}, до {expire_at} (в такому стилі)"
-        except:
+                # Якщо є тільки один рік
+                return f"{opened_at}, до {expire_at} (тримається як може)"
+                
+        except Exception as e:
+            # Фоллбек - повертаємо оригінальний текст
             return f"{opened_at}, до {expire_at}"
 
     def _determine_sale_or_exchange(self, data: dict) -> tuple[bool, bool]:
@@ -158,7 +172,7 @@ class OpenAIService:
             data.get('opened_at', ''), 
             data.get('expire_at', '')
         )
-        hashtags = self._select_hashtags(data)
+        hashtags = self._select_hashtags(data)  # Використовуємо рандомні хештеги
         
         # Визначаємо тип операції (продаж чи обмін)
         is_sale, is_exchange = self._determine_sale_or_exchange(data)
@@ -176,7 +190,7 @@ class OpenAIService:
 
 КРИТИЧНО ВАЖЛИВО - СТРУКТУРА ВИВОДУ:
 Структура ОБОВ'ЯЗКОВА (кожен рядок крім першого з "• "):
-{emoji} {назва}
+{emoji} *{назва}*
 • Залишок: {відсоток}% ({метафора})
 • Відкрито: {креативний опис дат}
 • Чому продаю: {іронічна причина}
@@ -184,7 +198,13 @@ class OpenAIService:
 • Шкіра: {стиль типу шкіри}
 {рядок з ціною або обміном - ВСТАВИТИ БЕЗ ЗМІН}
 • Локація: {місто}, доставка: {доставка з гумором}
-{3 хештеги в одному рядку через пробіли}
+
+{хештеги в окремому рядку}
+
+ФОРМАТУВАННЯ:
+- Назва ОБОВ'ЯЗКОВО в зірочках: *назва продукту*
+- Хештеги завжди в окремому рядку в кінці
+- Зберігай всі зірочки навколо назви
 
 СТИЛЬ:
 - Іронія та легке розчарування
@@ -234,10 +254,7 @@ class OpenAIService:
 
 ВАЖЛИВО: Рядок з ціною/обміном ВСТАВЛЯЙ БЕЗ ЖОДНИХ ЗМІН!
 
-ОБМЕЖЕННЯ: Весь текст разом з хештегами ≤950 символів!
-
-ХЕШТЕГИ: Обери 3 з цих хештегів і помісти в ОДНОМУ рядку через пробіли:
-#з_любовʼю_відпускаю #йой_не_моє #нюхові_травми #відкритий_але_живий #обережно_текстура #шось_непонятне_на_дотик"""
+ОБМЕЖЕННЯ: Весь текст разом з хештегами ≤950 символів!"""
 
         user_prompt = f"""Адаптуй ці дані під наш стиль:
 
@@ -255,6 +272,9 @@ class OpenAIService:
 РЯДОК ЦІНИ/ОБМІНУ (вставити БЕЗ ЗМІН):
 {price_exchange_line}
 
+ХЕШТЕГИ (вставити в кінці в окремому рядку):
+{hashtags}
+
 Поверни ТІЛЬКИ адаптований текст у вказаній структурі, БЕЗ пояснень."""
 
         try:
@@ -269,14 +289,25 @@ class OpenAIService:
             )
             
             result = response.choices[0].message.content.strip()
-            result = self._clean_telegram_text(result)
+            
+            # НЕ очищаємо зірочки для жирного тексту
+            result = re.sub(r'[_`]', '', result)  # Видаляємо тільки підкреслення та код
+            result = re.sub(r'\[.+?\]\(.+?\)', '', result)  # Видаляємо посилання
             
             # Додаємо емоджі до назви, якщо його немає
             if not result.startswith(emoji):
                 lines = result.split('\n')
                 if lines[0] and not any(e in lines[0] for e in ['🧴', '🧼', '🧖‍♀️', '⚙️', '✨']):
-                    lines[0] = f"{emoji} {lines[0]}"
+                    # Перевіряємо чи назва вже в зірочках
+                    if '*' in lines[0]:
+                        lines[0] = f"{emoji} {lines[0]}"
+                    else:
+                        lines[0] = f"{emoji} *{lines[0]}*"
                     result = '\n'.join(lines)
+            
+            # Перевіряємо чи хештеги в окремому рядку в кінці
+            if hashtags not in result:
+                result += f"\n\n{hashtags}"
             
             # Перевіряємо довжину та скорочуємо якщо потрібно
             if len(result) > 950:
@@ -327,7 +358,7 @@ class OpenAIService:
         is_sale, is_exchange = self._determine_sale_or_exchange(data)
         
         lines = [
-            f"{emoji} {data['title']}",
+            f"{emoji} *{data['title']}*",  # Назва в зірочках
             f"• Залишок: {percent}% ({condition})",
             f"• Відкрито: {formatted_dates}",
             f"• Чому продаю: {data.get('reason', 'не моє')}",
@@ -344,11 +375,13 @@ class OpenAIService:
             lines.append("• Ціна: договірна (пишіть, домовимося)")
         
         lines.append(f"• Локація: {data.get('city', '')}, доставка: {data.get('delivery', '')}")
+        
+        # Додаємо порожній рядок та хештеги
+        lines.append("")
         lines.append(self._select_hashtags(data))
         
         result = '\n'.join(lines)
         return result[:950] if len(result) > 950 else result
-        
 
 
 
@@ -358,14 +391,13 @@ class OpenAIService:
     
 
 
-
 class GoogleVisionService:
     def __init__(self, service_account_path: str):
         self.client = vision.ImageAnnotatorClient.from_service_account_file(service_account_path)
 
-    async def validate_photo(self, file_id: str, bot) -> bool:
-        """Перевірка зображення на чутливий контент через Google Vision API"""
-        print("🔍 [Vision] Починаємо перевірку фото...")
+    async def validate_photo(self, file_id: str, bot) -> tuple[bool, str]:
+        """Жорстка перевірка зображення на відповідність правилам"""
+        print("🔍 [Vision] Починаємо жорстку перевірку фото...")
 
         try:
             file = await bot.get_file(file_id)
@@ -377,25 +409,133 @@ class GoogleVisionService:
                 async with session.get(photo_url) as resp:
                     if resp.status != 200:
                         print(f"❌ [Vision] Неможливо завантажити фото. Статус: {resp.status}")
-                        return False
+                        return False, "Помилка завантаження"
                     content = await resp.read()
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
                 temp_file.write(content)
                 image_path = temp_file.name
 
-            with open(image_path, "rb") as image_file:
-                content = image_file.read()
+            # 1. Перевірка яскравості та контрасту
+            brightness_ok, brightness_reason = self._check_brightness_and_contrast(image_path)
+            if not brightness_ok:
+                os.remove(image_path)
+                return False, brightness_reason
 
+            # 2. Перевірка фону
+            background_ok, background_reason = self._check_background_quality(image_path)
+            if not background_ok:
+                os.remove(image_path)
+                return False, background_reason
+
+            # 3. Перевірка через Google Vision API
+            vision_ok, vision_reason = await self._check_with_vision_api(content)
+            if not vision_ok:
+                os.remove(image_path)
+                return False, vision_reason
+
+            # 4. Перевірка на частини тіла/обличчя
+            body_ok, body_reason = await self._check_body_parts(content)
+            if not body_ok:
+                os.remove(image_path)
+                return False, body_reason
+
+            # 5. Перевірка кольорової гами
+            color_ok, color_reason = self._check_color_distribution(image_path)
+            if not color_ok:
+                os.remove(image_path)
+                return False, color_reason
+
+            os.remove(image_path)
+            print("✅ [Vision] Фото пройшло всі перевірки.")
+            return True, "Фото відповідає вимогам"
+
+        except Exception as e:
+            print(f"❌ [Vision] Помилка при перевірці: {e}")
+            return False, f"Технічна помилка: {str(e)}"
+
+    def _check_brightness_and_contrast(self, image_path: str) -> tuple[bool, str]:
+        """Перевірка яскравості та контрасту"""
+        try:
+            # Використовуємо OpenCV для більш точної перевірки
+            img = cv2.imread(image_path)
+            if img is None:
+                return False, "Неможливо прочитати зображення"
+            
+            # Конвертуємо в сірий для аналізу
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Перевірка середньої яскравості
+            mean_brightness = np.mean(gray)
+            if mean_brightness < 80:  # Занадто темно
+                return False, "Зображення занадто темне"
+            if mean_brightness > 240:  # Занадто світло
+                return False, "Зображення занадто світле"
+            
+            # Перевірка контрасту
+            contrast = np.std(gray)
+            if contrast < 30:  # Низький контраст
+                return False, "Зображення має низький контраст"
+            
+            # Перевірка на переекспонування
+            overexposed_pixels = np.sum(gray > 250)
+            total_pixels = gray.size
+            if overexposed_pixels / total_pixels > 0.1:  # Більше 10% переекспонованих пікселів
+                return False, "Зображення переекспоноване"
+            
+            # Перевірка на недоекспонування
+            underexposed_pixels = np.sum(gray < 10)
+            if underexposed_pixels / total_pixels > 0.1:  # Більше 10% недоекспонованих пікселів
+                return False, "Зображення недоекспоноване"
+            
+            return True, "Яскравість і контраст в нормі"
+            
+        except Exception as e:
+            return False, f"Помилка перевірки яскравості: {str(e)}"
+
+    def _check_background_quality(self, image_path: str) -> tuple[bool, str]:
+        """Перевірка якості фону"""
+        try:
+            img = cv2.imread(image_path)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Виявлення країв для оцінки складності фону
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / edges.size
+            
+            if edge_density > 0.15:  # Занадто багато деталей у фоні
+                return False, "Фон занадто складний або захаращений"
+            
+            # Перевірка однорідності фону
+            # Розділяємо зображення на блоки та перевіряємо однорідність
+            h, w = gray.shape
+            block_size = 50
+            uniformity_scores = []
+            
+            for i in range(0, h - block_size, block_size):
+                for j in range(0, w - block_size, block_size):
+                    block = gray[i:i+block_size, j:j+block_size]
+                    std = np.std(block)
+                    uniformity_scores.append(std)
+            
+            mean_uniformity = np.mean(uniformity_scores)
+            if mean_uniformity > 50:  # Фон не однорідний
+                return False, "Фон не однорідний"
+            
+            return True, "Фон відповідає вимогам"
+            
+        except Exception as e:
+            return False, f"Помилка перевірки фону: {str(e)}"
+
+    async def _check_with_vision_api(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка через Google Vision API з жорсткими правилами"""
+        try:
             image = vision.Image(content=content)
             response = self.client.safe_search_detection(image=image)
             safe = response.safe_search_annotation
 
-            os.remove(image_path)
-
             if response.error.message:
-                print(f"❌ [Vision] Помилка API: {response.error.message}")
-                return False
+                return False, f"Помилка API: {response.error.message}"
 
             print("🔎 [Vision] SafeSearch результати:")
             print(f"    adult: {safe.adult.name}")
@@ -404,49 +544,120 @@ class GoogleVisionService:
             print(f"    spoof: {safe.spoof.name}")
             print(f"    medical: {safe.medical.name}")
 
-            thresholds = ["LIKELY", "VERY_LIKELY"]
-            is_inappropriate = (
-                safe.adult.name in thresholds or
-                safe.violence.name in thresholds or
-                safe.racy.name in thresholds
-            )
-
-            if is_inappropriate:
-                print("⛔️ [Vision] Фото вважається неприйнятним через SafeSearch.")
-                return False
-
-            print("✅ [Vision] Фото пройшло перевірку.")
-            return True
-
+            # Жорсткі правила - навіть "POSSIBLE" не пропускаємо
+            strict_thresholds = ["POSSIBLE", "LIKELY", "VERY_LIKELY"]
+            
+            if safe.adult.name in strict_thresholds:
+                return False, "Виявлено контент для дорослих"
+            if safe.racy.name in strict_thresholds:
+                return False, "Виявлено провокативний контент"
+            if safe.violence.name in strict_thresholds:
+                return False, "Виявлено насильницький контент"
+            if safe.medical.name in ["LIKELY", "VERY_LIKELY"]:
+                return False, "Виявлено медичний контент"
+            
+            return True, "SafeSearch пройдено"
+            
         except Exception as e:
-            print(f"❌ [Vision] Помилка при перевірці: {e}")
-            return False
+            return False, f"Помилка Vision API: {str(e)}"
 
+    async def _check_body_parts(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на частини тіла через Face Detection та Object Detection"""
+        try:
+            image = vision.Image(content=content)
+            
+            # Перевірка на обличчя
+            face_response = self.client.face_detection(image=image)
+            faces = face_response.face_annotations
+            
+            if len(faces) > 0:
+                return False, "Виявлено обличчя на зображенні"
+            
+            # Перевірка на об'єкти (включаючи частини тіла)
+            object_response = self.client.object_localization(image=image)
+            objects = object_response.localized_object_annotations
+            
+            # Список заборонених об'єктів
+            forbidden_objects = [
+                "Person", "Human body", "Human face", "Human head", 
+                "Human hand", "Human foot", "Human leg", "Human arm",
+                "Man", "Woman", "Child", "Baby", "Human eye", "Human hair",
+                "Clothing", "Dress", "Shirt", "Pants", "Shoe", "Hat"
+            ]
+            
+            for obj in objects:
+                if obj.name in forbidden_objects and obj.score > 0.3:
+                    return False, f"Виявлено заборонений об'єкт: {obj.name}"
+            
+            return True, "Частини тіла не виявлено"
+            
+        except Exception as e:
+            return False, f"Помилка перевірки частин тіла: {str(e)}"
+
+    def _check_color_distribution(self, image_path: str) -> tuple[bool, str]:
+        """Перевірка розподілу кольорів"""
+        try:
+            img = cv2.imread(image_path)
+            
+            # Перевірка на переважно темні кольори
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            v_channel = hsv[:, :, 2]  # Value channel
+            
+            # Якщо більше 60% пікселів темні
+            dark_pixels = np.sum(v_channel < 60)
+            total_pixels = v_channel.size
+            
+            if dark_pixels / total_pixels > 0.6:
+                return False, "Зображення занадто темне (переважають темні кольори)"
+            
+            # Перевірка на монохромність
+            b, g, r = cv2.split(img)
+            
+            # Якщо стандартне відхилення між каналами мале, то зображення монохромне
+            channel_std = np.std([np.mean(b), np.mean(g), np.mean(r)])
+            if channel_std < 10:
+                return False, "Зображення занадто монохромне"
+            
+            return True, "Розподіл кольорів прийнятний"
+            
+        except Exception as e:
+            return False, f"Помилка перевірки кольорів: {str(e)}"
 
     async def is_background_light(self, file_id: str, bot) -> bool:
-        """Визначає, чи фон зображення світлий"""
-        file = await bot.get_file(file_id)
-        file_path = file.file_path
-        photo_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+        """Визначає, чи фон зображення світлий (оновлена версія)"""
+        try:
+            file = await bot.get_file(file_id)
+            file_path = file.file_path
+            photo_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(photo_url) as resp:
-                if resp.status != 200:
-                    return False
-                content = await resp.read()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_url) as resp:
+                    if resp.status != 200:
+                        return False
+                    content = await resp.read()
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-            temp_file.write(content)
-            image_path = temp_file.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                temp_file.write(content)
+                image_path = temp_file.name
 
-        image = Image.open(image_path).convert("L")
-        stat = ImageStat.Stat(image)
-        brightness = stat.mean[0]
+            # Використовуємо OpenCV для більш точної оцінки
+            img = cv2.imread(image_path)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Аналіз центральної частини як можливого фону
+            h, w = gray.shape
+            center_region = gray[h//4:3*h//4, w//4:3*w//4]
+            brightness = np.mean(center_region)
 
-        os.remove(image_path)
+            os.remove(image_path)
+            
+            return brightness > 140  # Підвищили поріг для більш світлого фону
+            
+        except Exception as e:
+            print(f"Помилка перевірки фону: {e}")
+            return False
 
-        return brightness > 130
-
+    # Решта методів залишаються без змін
     def add_watermark(self, image_path: str, output_path: str, config) -> None:
         """Додає ватермарку на зображення"""
         base = Image.open(image_path).convert("RGBA")
@@ -496,7 +707,7 @@ class GoogleVisionService:
 
             sent = await bot.send_photo(
                 chat_id=bot.config.WATERMARK_TEMP_CHAT_ID or bot.config.CHANNEL_ID,
-                photo=FSInputFile(temp_output_path),  # ✅ передаємо шлях, не обʼєкт
+                photo=FSInputFile(temp_output_path),
                 disable_notification=True
             )
             new_file_id = sent.photo[-1].file_id
