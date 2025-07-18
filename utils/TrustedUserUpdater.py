@@ -115,22 +115,19 @@ class TrustedUserUpdater:
 
                 processed_count += 1
 
-                # 🔍 Перевірка trusted_exists — без глюків з NULL
+                # 🔍 trusted_users — як довідкова таблиця
                 trusted_exists = None
-
                 if normalized_phone and email:
                     trusted_exists = await conn.fetchrow("""
                         SELECT id FROM trusted_users
                         WHERE regexp_replace(phone, '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')
                         OR LOWER(email) = LOWER($2)
                     """, normalized_phone, email)
-
                 elif normalized_phone:
                     trusted_exists = await conn.fetchrow("""
                         SELECT id FROM trusted_users
                         WHERE regexp_replace(phone, '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')
                     """, normalized_phone)
-
                 elif email:
                     trusted_exists = await conn.fetchrow("""
                         SELECT id FROM trusted_users
@@ -144,36 +141,28 @@ class TrustedUserUpdater:
                     """, raw_phone, raw_email)
                     added_to_trusted += 1
 
-                # 🔁 Оновлюємо статус у users
-                await conn.execute("""
+                # 🟡 Змінимо trusted лише якщо був 'false'
+                result = await conn.fetch("""
                     UPDATE users
                     SET trusted = 'true', daily_limit = 10
                     WHERE trusted = 'false' AND (
                         (regexp_replace(phone, '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g') AND $1 IS NOT NULL)
                         OR (LOWER(email) = LOWER($2) AND $2 IS NOT NULL)
                     )
+                    RETURNING telegram_id
                 """, normalized_phone, email)
 
-                # 📩 Надсилаємо повідомлення
-                updated_user_ids = await conn.fetch("""
-                    SELECT telegram_id FROM users
-                    WHERE trusted = 'true' AND (
-                        (regexp_replace(phone, '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g') AND $1 IS NOT NULL)
-                        OR (LOWER(email) = LOWER($2) AND $2 IS NOT NULL)
-                )
-                """, normalized_phone, email)
-
-                for user_row in updated_user_ids:
-                    if user_row["telegram_id"]:
+                for row in result:
+                    telegram_id = row["telegram_id"]
+                    if telegram_id:
                         try:
                             await self.bot.send_message(
-                                chat_id=user_row["telegram_id"],
+                                chat_id=telegram_id,
                                 text="🌟 Ваш статус оновлено! Ви стали довіреним користувачем, Wonder Trust 🎉"
-                            )            
+                            )
                             updated_existing += 1
                         except Exception as e:
-                            logger.warning(f"⚠️ Не вдалося надіслати повідомлення {user_row['telegram_id']}: {e}")
-
+                            logger.warning(f"⚠️ Не вдалося надіслати повідомлення {telegram_id}: {e}")
 
             logger.info(f"✅ Оброблено: {processed_count}")
             logger.info(f"➕ Додано до trusted_users: {added_to_trusted}")
@@ -184,3 +173,4 @@ class TrustedUserUpdater:
                 "added": added_to_trusted,
                 "notified": updated_existing
             }
+
