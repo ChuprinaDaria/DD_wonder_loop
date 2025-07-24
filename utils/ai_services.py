@@ -385,7 +385,6 @@ class OpenAIService:
 
     
 
-
 class GoogleVisionService:
     def __init__(self, service_account_path: str):
         self.client = vision.ImageAnnotatorClient.from_service_account_file(service_account_path)
@@ -430,6 +429,12 @@ class GoogleVisionService:
                 os.remove(image_path)
                 return False, people_reason
 
+            # 4. Перевірка на диких тварин та комах
+            animals_ok, animals_reason = await self._check_for_animals_and_insects(content)
+            if not animals_ok:
+                os.remove(image_path)
+                return False, animals_reason
+
             os.remove(image_path)
             print("✅ [Vision] Фото пройшло всі перевірки.")
             return True, "Фото відповідає вимогам"
@@ -437,6 +442,76 @@ class GoogleVisionService:
         except Exception as e:
             print(f"❌ [Vision] Помилка при перевірці: {e}")
             return False, f"Технічна помилка: {str(e)}"
+
+    async def _check_for_animals_and_insects(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на наявність диких тварин та комах"""
+        try:
+            image = vision.Image(content=content)
+
+            # Перевірка на об'єкти
+            object_response = self.client.object_localization(image=image)
+            objects = object_response.localized_object_annotations
+
+            # Перевірка на лейбли
+            label_response = self.client.label_detection(image=image)
+            labels = label_response.label_annotations
+
+            # Заборонені дикі тварини
+            forbidden_animals = {
+                # Дикі тварини
+                "Lion", "Tiger", "Bear", "Wolf", "Fox", "Deer", "Wild boar", "Elephant", 
+                "Rhino", "Zebra", "Giraffe", "Hippo", "Crocodile", "Alligator", "Snake", 
+                "Lizard", "Frog", "Toad", "Bat", "Squirrel", "Raccoon", "Skunk", "Beaver",
+                "Otter", "Seal", "Whale", "Dolphin", "Shark", "Eagle", "Hawk", "Owl",
+                "Vulture", "Raven", "Crow", "Parrot", "Peacock", "Ostrich", "Penguin",
+                "Flamingo", "Swan", "Goose", "Duck", "Pelican", "Stork", "Heron",
+                
+                # Комахи та павукоподібні
+                "Spider", "Insect", "Beetle", "Cockroach", "Fly", "Mosquito", "Bee", 
+                "Wasp", "Ant", "Termite", "Moth", "Butterfly", "Dragonfly", "Cricket",
+                "Grasshopper", "Locust", "Tick", "Flea", "Louse", "Mite", "Scorpion",
+                "Centipede", "Millipede", "Worm", "Caterpillar", "Larva", "Maggot",
+                "Bug", "Aphid", "Thrips", "Weevil", "Grub", "Slug", "Snail",
+                
+                # Додаткові категорії
+                "Rodent", "Wild animal", "Pest", "Vermin", "Arachnid", "Arthropod",
+                "Invertebrate", "Parasite", "Wildlife", "Game animal", "Predator",
+                "Carnivore", "Herbivore", "Omnivore", "Mammal", "Reptile", "Amphibian",
+                "Bird of prey", "Waterfowl", "Songbird", "Seabird"
+            }
+
+            # Перевірка об'єктів
+            for obj in objects:
+                if obj.name in forbidden_animals and obj.score > 0.3:
+                    print(f"🚫 [Vision] Виявлено заборонену тварину в об'єктах: {obj.name} (впевненість: {obj.score:.2f})")
+                    return False, f"Виявлено дику тварину: {obj.name}"
+
+            # Перевірка лейблів
+            for label in labels:
+                if label.description in forbidden_animals and label.score > 0.4:
+                    print(f"🚫 [Vision] Виявлено заборонену тварину в лейблах: {label.description} (впевненість: {label.score:.2f})")
+                    return False, f"Виявлено дику тварину або комаху: {label.description}"
+                
+                # Додаткові перевірки на ключові слова в описах
+                label_lower = label.description.lower()
+                forbidden_keywords = [
+                    "spider", "insect", "bug", "pest", "wild", "animal", "rodent", 
+                    "reptile", "snake", "lizard", "frog", "bat", "bird", "fly",
+                    "mosquito", "bee", "wasp", "ant", "beetle", "cockroach",
+                    "worm", "caterpillar", "larva", "slug", "snail", "tick"
+                ]
+                
+                for keyword in forbidden_keywords:
+                    if keyword in label_lower and label.score > 0.5:
+                        print(f"🚫 [Vision] Виявлено заборонене ключове слово: {keyword} в '{label.description}' (впевненість: {label.score:.2f})")
+                        return False, f"Виявлено дику тварину або комаху: {label.description}"
+
+            print("✅ [Vision] Диких тварин та комах не виявлено")
+            return True, "Диких тварин та комах не виявлено"
+
+        except Exception as e:
+            print(f"❌ [Vision] Помилка перевірки тварин: {e}")
+            return False, f"Помилка перевірки тварин: {str(e)}"
 
     async def _check_for_people(self, content: bytes) -> tuple[bool, str]:
         """Перевірка на наявність людей або частин тіла"""
@@ -469,8 +544,6 @@ class GoogleVisionService:
 
         except Exception as e:
             return False, f"Помилка перевірки людей: {str(e)}"
-
-
 
     async def _check_with_vision_api(self, content: bytes) -> tuple[bool, str]:
         """Перевірка через Google Vision API з жорсткими правилами"""

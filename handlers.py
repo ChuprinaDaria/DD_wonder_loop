@@ -364,7 +364,7 @@ async def process_left_percent(message: Message, state: FSMContext):
         
         await state.update_data(left_percent=percent)
         await message.answer(
-            "📅 Коли було відкрито баночку дата, місяць?\n"
+            "📅 Коли було відкрито баночку, місяць, рік?\n"
             "<i>(напишіть тільки дату або “не відкрито”)</i>",
             parse_mode="HTML"
         )
@@ -382,7 +382,7 @@ async def process_opened_at(message: Message, state: FSMContext):
     """Обробка часу відкриття"""
     await state.update_data(opened_at=message.text)
     await message.answer(
-        "🗓 Строк придатності, тільки дата, місяць:"
+        "🗓 Строк придатності, тільки місяць, рік:"
     )
     await state.set_state(LotStates.waiting_for_expire_at)
 

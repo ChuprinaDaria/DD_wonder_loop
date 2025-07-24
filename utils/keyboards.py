@@ -96,7 +96,7 @@ def get_delivery_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📦 Нова Пошта"), KeyboardButton(text="📮 Укрпошта")],
             [KeyboardButton(text="🚗 Самовивіз"), KeyboardButton(text="🚚 Кур'єр")],
-            [KeyboardButton(text="🚇 Метро"), KeyboardButton(text="💬 Домовимось")],
+            [ KeyboardButton(text="💬 Домовимось")],
             [KeyboardButton(text="❌ Скасувати")]
         ],
         resize_keyboard=True,
