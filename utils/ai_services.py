@@ -369,8 +369,8 @@ class OpenAIService:
         else:
             lines.append("• Ціна: договірна (пишіть, домовимося)")
         
-        lines.append(f"• Локація: {data.get('city', '')}, доставка: {data.get('delivery', '')}")
-        
+        lines.append(f"• Локація: {data.get('city', '')}, ")
+        lines.append(f"• Доставка: {data.get('delivery', '')}")
         # Додаємо порожній рядок та хештеги
         lines.append("")
         lines.append(self._select_hashtags(data))
