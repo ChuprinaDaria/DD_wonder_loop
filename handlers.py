@@ -642,7 +642,23 @@ async def finish_photo_upload(message: Message, state: FSMContext):
     try:
         openai_service = message.bot.openai
         generated_text = await openai_service.generate_post_text(data)
+        
+        # 🚫 ПЕРЕВІРКА НА ЗАБОРОНЕНИЙ КОНТЕНТ
+        if generated_text.startswith("❌ Помилка:"):
+            logger.warning(f"🚫 Заборонений контент від користувача {user_id}: {generated_text}")
+            
+            # Скидаємо FSM і повертаємо в меню
+            await state.clear()
+            
+            await message.answer(
+                f"{generated_text}\n\n"
+                "Перевірте введену інформацію та спробуйте створити лот знову з дозволеним контентом.",
+                reply_markup=get_main_keyboard()
+            )
+            return  # ⚠️ ВАЖЛИВО: зупиняємо виконання функції!
+        
         logger.info(f"✅ Успішно згенеровано текст для {user_id}")
+        
     except Exception as e:
         logger.error(f"❌ Помилка при генерації тексту для {user_id}: {e}")
         generated_text = create_default_post_text(data)
@@ -692,6 +708,23 @@ async def confirm_lot(callback: CallbackQuery, state: FSMContext):
     """Підтвердження створення лоту"""
     await callback.answer()
     data = await state.get_data()
+
+    # 🚫 ДОДАТКОВА ПЕРЕВІРКА НА ЗАБОРОНЕНИЙ КОНТЕНТ
+    generated_text = data.get('generated_text', '')
+    if generated_text.startswith("❌ Помилка:"):
+        logger.warning(f"🚫 Спроба підтвердити лот з забороненим контентом: {callback.from_user.id}")
+        
+        try:
+            await callback.message.delete()
+        except:
+            pass
+            
+        await callback.message.answer(
+            "❌ Неможливо створити лот з забороненим контентом. Поверніться в головне меню.",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
+        return
 
     # 🧠 Обробка exchange / price логіки
     if data.get("exchange") is True:
