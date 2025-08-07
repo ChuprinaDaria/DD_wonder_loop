@@ -45,6 +45,129 @@ class OpenAIService:
         cleaned = re.sub(r'\[.+?\]\(.+?\)', '', cleaned)  # Видаляємо посилання
         return cleaned.strip()
 
+    def _check_prohibited_words(self, data: dict) -> tuple[bool, str]:
+        """Перевірка на заборонені слова в тексті користувача"""
+        
+        # Суворий список заборонених слів
+        forbidden_keywords = [
+            # Наркотики (укр)
+            "трава", "марихуана", "гашиш", "кокаїн", "героїн", "амфетамін", "екстазі", 
+            "мдма", "лсд", "канабіс", "конопля", "спайс", "солі", "синтетика",
+            "наркотик", "психотроп", "галюциноген", "опіум", "морфін", "кодеїн",
+            "метадон", "фентаніл", "крек", "мет", "амфа", "фен", "швидкість",
+            "дурь", "план", "анаша", "шмаль", "косяк", "бошки", "шишки",
+            
+            # Наркотики (англ)
+            "marijuana", "cannabis", "weed", "grass", "pot", "hash", "hashish",
+            "cocaine", "heroin", "amphetamine", "ecstasy", "mdma", "lsd", "acid",
+            "spice", "salts", "synthetic", "opium", "morphine", "codeine",
+            "methadone", "fentanyl", "crack", "meth", "speed", "dope", "joints",
+            "buds", "nugs", "bud", "smoke", "high", "stoned", "narcotic", "drug",
+            
+            # Тютюн і куріння (укр)
+            "сигарети", "сигарета", "цигарки", "айкос", "iqos", "вейп", "тютюн",
+            "кальян", "електронна сигарета", "парити", "димити", "курити",
+            "тютюнові", "нікотин", "смоли", "папіроси",
+            
+            # Тютюн і куріння (англ)
+            "cigarette", "cigarettes", "tobacco", "smoking", "vape", "vaping",
+            "e-cigarette", "electronic cigarette", "hookah", "shisha", "nicotine",
+            "cigar", "cigars", "pipe tobacco", "rolling tobacco", "lighter fluid",
+            
+            # Алкоголь (укр)
+            "вино", "пиво", "горілка", "віски", "алкоголь", "коньяк", "бренді",
+            "шампанське", "лікер", "настойка", "самогон", "спирт", "водка",
+            "ром", "джин", "текіла", "абсент", "вермут", "коктейль", "алкогольний",
+            "градус", "міцний", "слабоалкогольний", "пляшка", "бутилка",
+            
+            # Алкоголь (англ)
+            "wine", "beer", "vodka", "whiskey", "whisky", "alcohol", "cognac",
+            "brandy", "champagne", "liqueur", "liquor", "spirits", "rum", "gin",
+            "tequila", "absinthe", "vermouth", "cocktail", "alcoholic", "booze",
+            "bottle", "proof", "distilled", "fermented", "brewing", "distillery",
+            
+            # Ліки та БАДи (укр)
+            "ліки", "таблетки", "антибіотик", "рецептурні", "препарат", "бад",
+            "медикамент", "капсула", "ампула", "інєкція", "шприц", "анальгетик",
+            "знеболююче", "психотропний", "антидепресант", "транквілізатор",
+            "снодійне", "гормональний", "стероїд", "інсулін", "допінг",
+            
+            # Ліки та БАДи (англ)
+            "medicine", "medication", "pills", "tablets", "drugs", "pharmaceutical",
+            "prescription", "antibiotic", "analgesic", "painkiller", "psychotropic",
+            "antidepressant", "tranquilizer", "sleeping pills", "hormonal",
+            "steroid", "insulin", "doping", "supplement", "capsule", "syringe",
+            
+            # Порно та еротика (укр)
+            "порно", "ерот", "секс", "інтим", "дорослий", "18+", "xxx",
+            "еротичний", "сексуальний", "збуджуючий", "афродизіак", "вібратор",
+            "інтимний", "дорослі іграшки", "фетиш", "бдсм",
+            
+            # Порно та еротика (англ)
+            "porn", "erotic", "sex", "adult", "xxx", "sexual", "intimate",
+            "aphrodisiac", "vibrator", "adult toys", "fetish", "bdsm", "sexy",
+            "arousing", "stimulating", "pleasure", "orgasm", "masturbation",
+            
+            # Зброя та небезпечні речі (укр)
+            "зброя", "пістолет", "автомат", "ніж", "кинджал", "мачете",
+            "газовий балончик", "електрошокер", "нунчаки", "кастет", "арбалет",
+            "патрони", "набої", "порох", "вибухівка", "граната", "міна",
+            
+            # Зброя та небезпечні речі (англ)
+            "weapon", "gun", "pistol", "rifle", "knife", "blade", "dagger",
+            "pepper spray", "taser", "nunchucks", "knuckles", "crossbow",
+            "ammunition", "bullets", "gunpowder", "explosive", "grenade", "bomb",
+            
+            # Незаконні схеми (укр)
+            "фальшивий", "підробка", "крадений", "ворований", "нелегальний",
+            "контрабанда", "чорний ринок", "відмивання", "махінація", "шахрайство",
+            "обман", "афера", "пірамідка", "хайп", "лохотрон",
+            
+            # Незаконні схеми (англ)  
+            "fake", "counterfeit", "stolen", "illegal", "contraband", "black market",
+            "money laundering", "fraud", "scam", "pyramid scheme", "ponzi",
+            "laundering", "smuggling", "bootleg", "pirated", "hacked"
+        ]
+        
+        # Збираємо весь текст для перевірки
+        texts_to_check = [
+            data.get('title', ''),
+            data.get('description', ''),
+            data.get('reason', ''),
+            data.get('category', ''),
+            data.get('skin_type', ''),
+            data.get('city', ''),
+            data.get('delivery', ''),
+            data.get('exchange_details', '')
+        ]
+        
+        full_text = ' '.join(texts_to_check).lower()
+        
+        # Перевіряємо кожне заборонене слово
+        for word in forbidden_keywords:
+            if word.lower() in full_text:
+                print(f"🚫 [OpenAI] Виявлено заборонене слово: '{word}' у тексті користувача")
+                return False, f"Виявлено заборонений контент: '{word}'"
+        
+        # Додаткова перевірка на підозрілі комбінації
+        suspicious_patterns = [
+            # Завуальовані згадки наркотиків
+            "для релаксу", "для настрою", "розслабляючий ефект", "піднесення духу",
+            "альтернативна медицина", "рослинний препарат", "натуральний стимулятор",
+            # Завуальовані згадки алкоголю  
+            "для вечірок", "веселящий", "розслабляючий напій", "для компанії",
+            # Завуальовані згадки еротики
+            "для дорослих", "інтимна атмосфера", "романтичний вечір", "збудливий аромат"
+        ]
+        
+        for pattern in suspicious_patterns:
+            if pattern in full_text:
+                print(f"🚫 [OpenAI] Виявлено підозрілий паттерн: '{pattern}'")
+                return False, f"Підозрілий контент: '{pattern}'"
+        
+        return True, "Контент перевірено, заборонених слів не виявлено"
+
+
     def _select_hashtags(self, data: dict) -> str:
         """Вибирає 3 рандомні хештеги з наявних"""
         all_tags = [
@@ -165,6 +288,12 @@ class OpenAIService:
 
     async def generate_post_text(self, data: dict) -> str:
         """Генерує весь пост через GPT з збереженням структури"""
+         # 👇 ОСЬ СЮДИ ДОДАТИ ЦІ 4 РЯДКИ
+        is_content_ok, check_result = self._check_prohibited_words(data)
+        if not is_content_ok:
+            print(f"❌ [OpenAI] Контент не пройшов модерацію: {check_result}")
+            return f"❌ Помилка: {check_result}"
+        
         
         # Підготовка даних
         emoji = self._get_category_emoji(data['category'])
@@ -436,6 +565,14 @@ class GoogleVisionService:
                 os.remove(image_path)
                 return False, animals_reason
 
+                
+        
+            # 5. Перевірка на заборонені товари (одяг, тютюн, алкоголь, ліки)
+            items_ok, items_reason = await self._check_for_prohibited_items(content)
+            if not items_ok:
+                os.remove(image_path)
+                return False, items_reason
+
             os.remove(image_path)
             print("✅ [Vision] Фото пройшло всі перевірки.")
             return True, "Фото відповідає вимогам"
@@ -513,6 +650,101 @@ class GoogleVisionService:
         except Exception as e:
             print(f"❌ [Vision] Помилка перевірки тварин: {e}")
             return False, f"Помилка перевірки тварин: {str(e)}"
+        
+
+
+    async def _check_for_prohibited_items(self, content: bytes) -> tuple[bool, str]:
+        """Перевірка на наявність заборонених товарів: одяг, тютюн, алкоголь, ліки"""
+        try:
+            image = vision.Image(content=content)
+
+            # Перевірка на об'єкти
+            object_response = self.client.object_localization(image=image)
+            objects = object_response.localized_object_annotations
+
+            # Перевірка на лейбли
+            label_response = self.client.label_detection(image=image)
+            labels = label_response.label_annotations
+
+            # Заборонені товари
+            forbidden_items = {
+                # Одяг та аксесуари
+                "Clothing", "Shirt", "T-shirt", "Blouse", "Sweater", "Hoodie", "Jacket", 
+                "Coat", "Dress", "Skirt", "Pants", "Jeans", "Shorts", "Underwear", 
+                "Bra", "Panties", "Socks", "Stockings", "Tights", "Shoes", "Boots", 
+                "Sneakers", "Sandals", "High heels", "Hat", "Cap", "Scarf", "Gloves",
+                "Belt", "Tie", "Bow tie", "Watch", "Jewelry", "Necklace", "Bracelet",
+                "Ring", "Earrings", "Sunglasses", "Glasses", "Bag", "Handbag", 
+                "Backpack", "Purse", "Wallet", "Swimwear", "Bikini", "Lingerie",
+                
+                # Тютюнові вироби  
+                "Cigarette", "Cigar", "Tobacco", "E-cigarette", "Vape", "IQOS",
+                "Electronic cigarette", "Vaporizer", "Hookah", "Smoking pipe",
+                "Lighter", "Ashtray", "Cigarette pack", "Tobacco leaf", "Rolling paper",
+                
+                # Алкоголь
+                "Wine", "Beer", "Vodka", "Whiskey", "Alcohol", "Liquor", "Champagne",
+                "Brandy", "Rum", "Gin", "Cocktail", "Wine bottle", "Beer bottle",
+                "Liquor bottle", "Wine glass", "Beer glass", "Shot glass", "Flask",
+                "Brewery", "Distillery", "Bar", "Pub", "Alcoholic beverage",
+                
+                # Ліки та медичні препарати
+                "Medicine", "Pill", "Tablet", "Capsule", "Medication", "Drug", 
+                "Pharmaceutical", "Prescription", "Antibiotic", "Syringe", "Injection",
+                "Medical prescription", "Pharmacy", "Pill bottle", "Medicine bottle",
+                "Medical kit", "First aid kit", "Thermometer", "Blood pressure monitor",
+                
+                # БАДи та добавки
+                "Supplement", "Vitamin", "Dietary supplement", "Protein powder",
+                "Energy drink", "Sports nutrition", "Health supplement", "Herbal supplement"
+            }
+
+            print("🔎 [Vision] Перевірка на заборонені товари...")
+
+            # Перевірка об'єктів
+            for obj in objects:
+                if obj.name in forbidden_items and obj.score > 0.3:
+                    print(f"🚫 [Vision] Виявлено заборонений товар в об'єктах: {obj.name} (впевненість: {obj.score:.2f})")
+                    return False, f"Виявлено заборонений товар: {obj.name}"
+
+            # Перевірка лейблів
+            for label in labels:
+                if label.description in forbidden_items and label.score > 0.4:
+                    print(f"🚫 [Vision] Виявлено заборонений товар в лейблах: {label.description} (впевненість: {label.score:.2f})")
+                    return False, f"Виявлено заборонений товар: {label.description}"
+                
+                # Додаткові перевірки на ключові слова в описах
+                label_lower = label.description.lower()
+                forbidden_keywords = [
+                    # Одяг
+                    "clothing", "shirt", "dress", "pants", "shoes", "jacket", "coat",
+                    "sweater", "jeans", "underwear", "lingerie", "swimwear", "hat",
+                    "jewelry", "watch", "bag", "belt", "socks", "boots", "sandals",
+                    
+                    # Тютюн
+                    "cigarette", "tobacco", "smoking", "vape", "nicotine", "lighter",
+                    "cigar", "hookah", "e-cigarette", "iqos",
+                    
+                    # Алкоголь  
+                    "alcohol", "wine", "beer", "vodka", "whiskey", "liquor", "bar",
+                    "cocktail", "brewery", "distillery", "alcoholic", "champagne",
+                    
+                    # Ліки
+                    "medicine", "pill", "drug", "pharmaceutical", "prescription",
+                    "medication", "supplement", "vitamin", "syringe", "pharmacy"
+                ]
+                
+                for keyword in forbidden_keywords:
+                    if keyword in label_lower and label.score > 0.5:
+                        print(f"🚫 [Vision] Виявлено заборонене ключове слово: {keyword} в '{label.description}' (впевненість: {label.score:.2f})")
+                        return False, f"Виявлено заборонений товар: {label.description}"
+
+            print("✅ [Vision] Заборонених товарів не виявлено")
+            return True, "Заборонених товарів не виявлено"
+
+        except Exception as e:
+            print(f"❌ [Vision] Помилка перевірки заборонених товарів: {e}")
+            return False, f"Помилка перевірки товарів: {str(e)}"
 
     async def _check_for_people(self, content: bytes) -> tuple[bool, str]:
         """Перевірка на наявність людей або частин тіла"""

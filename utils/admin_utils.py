@@ -286,7 +286,7 @@ async def find_user(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✅ Додати в довірені", callback_data="admin_trust")],
         [InlineKeyboardButton(text="⚠️ Попередити", callback_data="admin_warn")],
         [InlineKeyboardButton(text="🚫 Заблокувати", callback_data="admin_ban_perm")],
-        
+        [InlineKeyboardButton(text="🚫 Видалити з довірених", callback_data="admin_untrust")],
         [InlineKeyboardButton(text="🔓 Розблокувати", callback_data="admin_unban")]
     ])
 
@@ -478,7 +478,41 @@ async def add_to_trusted(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("✅ Користувача додано до довірених.")
     await callback.answer()
 
+@admin_router.callback_query(F.data == "admin_untrust")
+async def remove_from_trusted(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    user = data.get("found_user")
 
+    if not user:
+        await callback.message.answer("❌ Не знайдено користувача в стані.")
+        await callback.answer()
+        return
+
+    telegram_id = user['telegram_id']
+    
+    # Перевіряємо чи користувач взагалі довірений
+    if not user.get('trusted'):
+        await callback.message.edit_text("⚠️ Користувач і так не є довіреним.")
+        await callback.answer()
+        return
+
+    # Видаляємо з довірених (встановлюємо trusted = 'false')
+    await callback.bot.db.set_user_trusted(telegram_id, 'false')
+
+    # Повідомлення юзеру
+    try:
+        await callback.bot.send_message(
+            chat_id=telegram_id,
+            text="⚠️ Вас видалено зі списку довірених користувачів.\n"
+                 "Тепер ваші лоти проходитимуть модерацію перед публікацією."
+        )
+        logger.info(f"📩 Сповіщення про видалення з довірених надіслано юзеру {telegram_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не вдалося надіслати повідомлення юзеру {telegram_id}: {e}")
+
+    await callback.message.edit_text("✅ Користувача видалено з довірених.")
+    await callback.answer()
+    await state.clear()
 
 
 @admin_router.callback_query(F.data == "admin_trusted")
